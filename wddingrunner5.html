@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wedding Runner (Pelari Pengantin)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        /* Custom styles for classic game look */
+        .game-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        #gameCanvas {
+            border: 2px solid #333;
+            background-color: #f7f7f7;
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+            image-rendering: pixelated;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+            transition: background-color 2s ease-in-out; 
+        }
+        
+        .game-container {
+            padding: 20px;
+            background-color: #f0f0f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Message Box styling */
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 30px;
+            background-color: white;
+            border: 4px solid #f9a8d4;
+            border-radius: 12px;
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            z-index: 10;
+        }
+
+        @media (max-width: 640px) {
+            .game-container {
+                padding: 10px;
+            }
+            #messageBox {
+                width: 80%;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 game-container">
+    <div id="app" class="w-full max-w-xl bg-white shadow-xl rounded-lg p-4">
+        <h1 class="text-3xl game-font text-center text-pink-600 mb-4 tracking-tight">
+            Wedding Runner
+        </h1>
+        
+        <!-- Canvas Container -->
+        <div class="relative">
+            <canvas id="gameCanvas" width="800" height="400"></canvas>
+            
+            <!-- Message Box/Menu -->
+            <div id="messageBox" class="game-font hidden">
+                <!-- Content injected by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Score and Controls Info -->
+        <div class="flex justify-between items-center mt-4 text-sm game-font">
+            <div id="scoreDisplay" class="text-gray-700">
+                Skor: <span id="currentScore" class="text-pink-600 font-bold">0</span>
+            </div>
+            <div id="controlsInfo" class="text-gray-500 text-xs">
+                Aksi: Spasi / Klik / Sentuh
+            </div>
+        </div>
+        
+        <!-- Mobile/Action Button -->
+        <div class="mt-4 text-center">
+            <button id="startButton" class="game-font px-6 py-3 bg-pink-500 text-white rounded-full shadow-lg hover:bg-pink-600 transition duration-150 transform hover:scale-105">
+                Mulai Game
+            </button>
+        </div>
+
+        <!-- Debug/Status Info -->
+        <div id="debugInfo" class="mt-4 text-xs text-center text-gray-400"></div>
+
+    </div>
+
+    <script>
+        // Global variables for environment
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const messageBox = document.getElementById('messageBox');
+        const scoreDisplay = document.getElementById('currentScore');
+        const startButton = document.getElementById('startButton');
+        const debugInfo = document.getElementById('debugInfo');
+
+        // Game State
+        let gameRunning = false;
+        let gameOver = false;
+        let animationFrameId;
+        let score = 0;
+        let speed = 6;
+        let gravity = 0.5;
+        let fps = 60;
+        let lastFrameTime = 0;
+        const targetFrameTime = 1000 / fps;
+
+        // --- KONFIGURASI UKURAN ASET ---
+        const PLAYER_WIDTH = 150; 
+        const PLAYER_HEIGHT = 210;
+        const OBSTACLE_WIDTH = 300; 
+        const OBSTACLE_HEIGHT = 300;
+        
+        // Penyesuaian vertikal (Y) agar pemain/rintangan terlihat 'tenggelam' sedikit di ground.
+        const Y_VISUAL_OFFSET_DEFAULT = 30; 
+        const Y_VISUAL_OFFSET_RINTANG1 = 45; 
+        // ------------------------------------
+
+        // --- CAMERA STATE (SOLUSI BARU UNTUK LOMPATAN) ---
+        let cameraOffsetY = 0; 
+        // Batas Y di mana kamera mulai mengikuti (40% dari atas layar)
+        const CAMERA_ACTIVATION_Y = canvas.height * 0.4; 
+        // ---------------------------------------------------
+        
+        // Couple (Player) State
+        const couple = {
+            x: 50,
+            y: 0,
+            width: PLAYER_WIDTH,    
+            height: PLAYER_HEIGHT,  
+            vy: 0,
+            isJumping: false,
+            groundY: 0, // Akan diatur di startGame
+            frameIndex: 0,
+            frameDelay: 5, // Kecepatan animasi lari
+            frameCounter: 0
+        };
+
+        // Obstacles State
+        let obstacles = [];
+        let obstacleSpawnRate = 180; // frames
+        let obstacleSpawnCounter = 0;
+
+        // Ground/Background State
+        const ground = {
+            y: canvas.height - 50,
+            height: 50,
+            color: '#d4edc5'
+        };
+
+        // Variabel untuk melacak status pemuatan gambar
+        let allImagesLoaded = 0;
+        let totalImagesToLoad = 0;
+        
+        // Base URL dari repositori GitHub
+        const BASE_URL = 'https://raw.githubusercontent.com/ITANAKPG/wedingrunner/main/';
+
+        // --- Image Loading ---
+
+        function LoadImage(src) {
+            const img = new Image();
+            
+            // Pasang event handler onload dan onerror SEBELUM mengatur src
+            img.onload = () => {
+                allImagesLoaded++;
+                // Cek apakah semua gambar sudah dimuat untuk memulai game
+                if (allImagesLoaded === totalImagesToLoad) {
+                    // Setelah semua dimuat, atur groundY pemain, disesuaikan dengan offset visual default
+                    couple.groundY = ground.y - couple.height + Y_VISUAL_OFFSET_DEFAULT; 
+                    couple.y = couple.groundY; // Set posisi awal
+                    showStartScreen();
+                }
+            };
+             // Handle image loading error
+            img.onerror = () => {
+                console.error(`Gagal memuat gambar: ${src}. Harap periksa URL/path.`);
+                messageBox.innerHTML = `
+                    <h2 class="text-xl font-bold text-red-600 mb-2">Kesalahan Pemuatan Gambar!</h2>
+                    <p class="text-sm mb-4">Gagal memuat: ${src}. Pastikan URL sudah benar.</p>
+                `;
+                messageBox.style.display = 'block';
+                gameRunning = false;
+            };
+
+            // Atur src sebagai langkah terakhir (menggunakan URL lengkap)
+            img.src = src;
+
+            return img;
+        }
+
+        // --- Definisi Gambar Pemain ---
+        const run1Src = `${BASE_URL}RUN-1.png`; 
+        const run2Src = `${BASE_URL}RUN-2.png`; 
+        const jumpSrc = `${BASE_URL}Jump.png`; 
+        
+        const runImages = [run1Src, run2Src].map(src => LoadImage(src));
+        const jumpImage = LoadImage(jumpSrc);
+        
+        // --- Definisi Gambar Rintangan Beranimasi (URL DIKOREKSI KE EKSTENSI TUNGGAL .png) ---
+        const obstacleAnimationData = {
+            'RINTANG1': [`${BASE_URL}RINTANG1_1.png`, `${BASE_URL}RINTANG1_2.png`],
+            'RINTANG2': [`${BASE_URL}RINTANG2_1.png`, `${BASE_URL}RINTANG2_2.png`],
+            // KOREKSI: Menggunakan ekstensi .png tunggal (revert perbaikan yang salah)
+            'RINTANG3': [`${BASE_URL}RINTANG3_1.png`, `${BASE_URL}RINTANG3_2.png`], 
+            'RINTANG4': [`${BASE_URL}RINTANG4_1.png`, `${BASE_URL}RINTANG4_2.png`], 
+        };
+
+        // Map untuk menyimpan objek Image yang dimuat
+        const loadedObstacleFrames = {};
+        
+        // Hitung total gambar yang akan dimuat
+        totalImagesToLoad = runImages.length + 1; // 2 lari + 1 lompat
+
+        // Muat frame rintangan
+        for (const type in obstacleAnimationData) {
+            loadedObstacleFrames[type] = obstacleAnimationData[type].map(src => {
+                totalImagesToLoad++; // Tambahkan ke hitungan total
+                return LoadImage(src);
+            });
+        }
+        
+        // --- Game Setup and Loop ---
+
+        function showStartScreen() {
+            if (gameRunning || gameOver) return; 
+
+            messageBox.innerHTML = `
+                <h2 class="text-xl font-bold text-pink-600 mb-2">Wedding Runner!</h2>
+                <p class="text-sm mb-4">Uji kekuatan cinta Anda!</p>
+                <button id="restartButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm">
+                    Mulai Game (Spasi)
+                </button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+            messageBox.style.display = 'block';
+            startButton.style.display = 'none'; // Sembunyikan tombol mulai asli
+        }
+
+
+        function startGame() {
+            if (gameRunning) return;
+            gameRunning = true;
+            gameOver = false;
+            score = 0;
+            speed = 6;
+            obstacles = [];
+            obstacleSpawnCounter = 0;
+            
+            // Reset Camera
+            cameraOffsetY = 0; 
+
+            // Set posisi awal pemain berdasarkan groundY, disesuaikan dengan offset visual default
+            couple.groundY = ground.y - couple.height + Y_VISUAL_OFFSET_DEFAULT; 
+            couple.y = couple.groundY;
+            
+            // Reset player position
+            couple.vy = 0;
+            couple.isJumping = false;
+            
+            messageBox.style.display = 'none';
+            startButton.style.display = 'none';
+
+            lastFrameTime = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameRunning) return;
+
+            // Simple fixed timestep approximation
+            const deltaTime = timestamp - lastFrameTime;
+
+            if (deltaTime >= targetFrameTime) {
+                updateGame();
+                drawGame();
+                lastFrameTime = timestamp - (deltaTime % targetFrameTime);
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Update Logic ---
+
+        function updateGame() {
+            updateCouple();
+            updateObstacles();
+            checkCollisions();
+            updateScore();
+            updateSpeed();
+
+            // debugInfo.textContent = `Y: ${couple.y.toFixed(2)}, VY: ${couple.vy.toFixed(2)}, CamY: ${cameraOffsetY.toFixed(2)}`;
+        }
+
+        function updateCouple() {
+            if (couple.isJumping) {
+                // Apply gravity
+                couple.vy += gravity;
+                couple.y += couple.vy;
+
+                // --- LOGIKA KAMERA VERTIKAL ---
+                // Jika couple melompat di atas batas aktivasi (misalnya, Y < 160)
+                if (couple.y < CAMERA_ACTIVATION_Y) {
+                    // Hitung offset yang diperlukan untuk menjaga couple di posisi aktivasi
+                    cameraOffsetY = CAMERA_ACTIVATION_Y - couple.y;
+                }
+                
+                // Pastikan cameraOffsetY tidak pernah negatif (dunia tidak bergerak ke atas)
+                cameraOffsetY = Math.max(0, cameraOffsetY); 
+                // ------------------------------
+
+                // Check for landing
+                if (couple.y >= couple.groundY) {
+                    couple.y = couple.groundY;
+                    couple.isJumping = false;
+                    couple.vy = 0;
+                    cameraOffsetY = 0; // Kembalikan kamera ke nol saat mendarat
+                }
+            } else {
+                couple.y = couple.groundY; // Ensure couple stays on ground
+                cameraOffsetY = 0; // Pastikan kamera nol saat di tanah
+            }
+
+            // Update running frame counter
+            couple.frameCounter++;
+            if (couple.frameCounter >= couple.frameDelay) {
+                couple.frameIndex = (couple.frameIndex + 1) % runImages.length;
+                couple.frameCounter = 0;
+            }
+        }
+
+        function updateObstacles() {
+            // Move and animate obstacles
+            obstacles.forEach(obstacle => {
+                obstacle.x -= speed;
+                
+                // Update obstacle animation
+                obstacle.frameCounter++;
+                if (obstacle.frameCounter >= obstacle.frameDelay) {
+                    obstacle.frameIndex = (obstacle.frameIndex + 1) % obstacle.frames.length;
+                    obstacle.frameCounter = 0;
+                }
+            });
+
+            // Remove off-screen obstacles
+            obstacles = obstacles.filter(obstacle => obstacle.x + obstacle.width > 0);
+
+            // Spawn new obstacles
+            obstacleSpawnCounter++;
+            if (obstacleSpawnCounter >= obstacleSpawnRate) {
+                spawnObstacle();
+                obstacleSpawnCounter = 0;
+                
+                // Gradually increase spawn rate (make it harder)
+                obstacleSpawnRate = Math.max(90, obstacleSpawnRate - 1); 
+            }
+        }
+
+        function spawnObstacle() {
+            const obstacleKeys = Object.keys(loadedObstacleFrames);
+            const type = obstacleKeys[Math.floor(Math.random() * obstacleKeys.length)];
+            const frames = loadedObstacleFrames[type]; // Ambil array Image objects
+
+            // Menggunakan ukuran rintangan tetap
+            const width = OBSTACLE_WIDTH; 
+            const height = OBSTACLE_HEIGHT;
+            
+            // Tentukan offset visual berdasarkan jenis rintangan
+            const visualOffset = (type === 'RINTANG1') ? Y_VISUAL_OFFSET_RINTANG1 : Y_VISUAL_OFFSET_DEFAULT;
+
+            const newObstacle = {
+                x: canvas.width,
+                // Posisi Y kini FIXED (posisi dunia absolut)
+                y: ground.y - height + visualOffset, 
+                width: width,
+                height: height,
+                frames: frames, // Array of loaded Image objects
+                type: type, // Menyimpan jenis rintangan untuk logika hitbox spesifik
+                frameIndex: 0,
+                frameDelay: 10, // Kecepatan animasi rintangan (dapat disesuaikan)
+                frameCounter: 0,
+            };
+
+            obstacles.push(newObstacle);
+        }
+
+        function updateScore() {
+            score++;
+            scoreDisplay.textContent = Math.floor(score / 10);
+        }
+
+        function updateSpeed() {
+            // Gradually increase speed over time
+            speed = 6 + Math.floor(score / 1000) * 0.5;
+            speed = Math.min(speed, 15); // Max speed limit
+        }
+
+        // --- Drawing Logic ---
+
+        function drawGame() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw background (APPLY cameraOffsetY)
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#e0f7fa'); // Light sky blue
+            gradient.addColorStop(0.7, '#fff3e0'); // Light peach/cloud
+            ctx.fillStyle = gradient;
+            // Background mengisi ruang hingga batas ground yang digeser
+            ctx.fillRect(0, 0, canvas.width, ground.y + cameraOffsetY);
+
+            // Draw ground (APPLY cameraOffsetY)
+            ctx.fillStyle = ground.color;
+            ctx.fillRect(0, ground.y + cameraOffsetY, canvas.width, ground.height);
+            
+            // Draw couple (Player) - Y bergerak bebas tapi posisi gambar di-offset
+            drawCouple();
+
+            // Draw obstacles (APPLY cameraOffsetY)
+            drawObstacles();
+
+            // Draw score (TETAP DI POSISI EKRAN)
+            ctx.fillStyle = '#333';
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText(`SCORE: ${Math.floor(score / 10)}`, canvas.width - 200, 30);
+
+            /* // DEBUG: Gambar Hitbox untuk verifikasi
+            drawHitboxes();
+            */
+        }
+
+        function drawCouple() {
+             // Pastikan gambar sudah dimuat sebelum mencoba mengakses properti 'src'
+            let currentImage = runImages[couple.frameIndex];
+            
+            if (couple.isJumping) {
+                currentImage = jumpImage;
+            }
+
+            if (currentImage && currentImage.complete) {
+                // Posisi Y couple di gambar DITAMBAH dengan cameraOffsetY
+                ctx.drawImage(
+                    currentImage, 
+                    couple.x, 
+                    couple.y + cameraOffsetY, // <-- PENTING: Penambahan offset
+                    couple.width, 
+                    couple.height
+                );
+            }
+        }
+
+        function drawObstacles() {
+            obstacles.forEach(obstacle => {
+                const currentFrame = obstacle.frames[obstacle.frameIndex];
+                // Pastikan gambar sudah dimuat
+                if(currentFrame && currentFrame.complete) {
+                    // Posisi Y obstacle di gambar DITAMBAH dengan cameraOffsetY
+                    ctx.drawImage(
+                        currentFrame,
+                        obstacle.x,
+                        obstacle.y + cameraOffsetY, // <-- PENTING: Penambahan offset
+                        obstacle.width,
+                        obstacle.height
+                    );
+                }
+            });
+        }
+        
+        // --- Interaction Logic ---
+
+        function jump() {
+            if (!couple.isJumping && gameRunning) {
+                couple.isJumping = true;
+                couple.vy = -20; 
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.code === 'Space') {
+                event.preventDefault(); // Prevent scrolling
+                if (gameOver) {
+                    startGame();
+                } else {
+                    jump();
+                }
+            }
+        }
+
+        function handleClick(event) {
+            if (gameOver) {
+                 // Check if click was on the restart button (only if not hidden)
+                 if(messageBox.style.display !== 'none' && event.target.id === 'restartButton') {
+                    return; // Handled by button listener
+                 }
+                startGame();
+            } else if (gameRunning) {
+                jump();
+            }
+        }
+
+        // --- Collision Detection Helper Functions (Hitbox Refinement) ---
+
+        function getCoupleHitbox(couple) {
+            // Hitbox yang lebih ketat untuk karakter (150x210)
+            const offsetX = 40;
+            const offsetY = 30;
+            const widthAdj = 80; // Lebar efektif: 150 - 80 = 70
+            const heightAdj = 30; // Tinggi efektif: 210 - 30 = 180 (Fokus di badan)
+            
+            return {
+                x: couple.x + offsetX,
+                y: couple.y + offsetY,
+                w: couple.width - widthAdj,
+                h: couple.height - heightAdj
+            };
+        }
+
+        function getObstacleHitbox(obstacle) {
+            // Ukuran total gambar rintangan adalah 300x300
+
+            let offsetX, offsetY, widthAdj, heightAdj;
+
+            switch (obstacle.type) {
+                case 'RINTANG1':
+                    // Lilin & Meja
+                    offsetX = 100;   
+                    offsetY = 50;    
+                    widthAdj = 200;  
+                    heightAdj = 50; 
+                    break;
+                case 'RINTANG2':
+                    // Kue
+                    offsetX = 95;   
+                    offsetY = 150;  
+                    widthAdj = 190; 
+                    heightAdj = 150; 
+                    break;
+                case 'RINTANG3':
+                    // Cincin/Kotak (Diasumsikan fokus di bagian bawah dan tengah)
+                    offsetX = 100;   
+                    offsetY = 160;    
+                    widthAdj = 200;  
+                    heightAdj = 160; 
+                    break;
+                case 'RINTANG4':
+                    // Anggur/Botol (Diasumsikan fokus di bagian bawah botol)
+                    offsetX = 120;   
+                    offsetY = 180;    
+                    widthAdj = 240;  
+                    heightAdj = 180; 
+                    break;
+                default:
+                    // Fallback
+                    offsetX = 0;   
+                    offsetY = 0;    
+                    widthAdj = 0;  
+                    heightAdj = 0; 
+            }
+
+            return {
+                x: obstacle.x + offsetX,
+                y: obstacle.y + offsetY, 
+                w: obstacle.width - widthAdj,
+                h: obstacle.height - heightAdj
+            };
+        }
+
+        function checkCollisions() {
+            for (const obstacle of obstacles) {
+                // Kolisi menggunakan posisi ABSOLUT (World Coordinates)
+                if (isColliding(couple, obstacle)) {
+                    endGame();
+                    break;
+                }
+            }
+        }
+
+        function isColliding(couple, obstacle) {
+            // Menggunakan Hitbox yang sudah diperhalus/diperkecil
+            const coupleRect = getCoupleHitbox(couple);
+            const obstacleRect = getObstacleHitbox(obstacle);
+
+            // AABB Collision Check menggunakan Y posisi absolut
+            return coupleRect.x < obstacleRect.x + obstacleRect.w &&
+                   coupleRect.x + coupleRect.w > obstacleRect.x &&
+                   coupleRect.y < obstacleRect.y + obstacleRect.h &&
+                   coupleRect.y + coupleRect.h > obstacleRect.y;
+        }
+
+        // --- Game Over ---
+        function endGame() {
+            gameRunning = false;
+            gameOver = true;
+            cancelAnimationFrame(animationFrameId);
+            
+            messageBox.innerHTML = `
+                <h2 class="text-xl font-bold text-red-600 mb-2">Game Over!</h2>
+                <p class="text-sm mb-4">Skor Anda: <span class="text-pink-600">${Math.floor(score / 10)}</span></p>
+                <p class="text-xs mb-6">Perjalanan pernikahan harus melewati rintangan! Coba lagi.</p>
+                <button id="restartButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm">
+                    Mulai Ulang (Spasi)
+                </button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+            messageBox.style.display = 'block';
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', handleKeyPress);
+        canvas.addEventListener('click', handleClick);
+        startButton.addEventListener('click', startGame);
+
+        // Safety check if runImages are empty or loading fails
+        if (runImages.length === 0 || totalImagesToLoad === 0) {
+            // Setup default dimensions if images fail to load completely
+            couple.groundY = ground.y - couple.height + Y_VISUAL_OFFSET_DEFAULT; // Tambahkan offset visual
+            couple.y = couple.groundY;
+        }
+        
+        // Memulai loop game setelah semua gambar dimuat (ditangani di LoadImage)
+    </script>
+</body>
+</html>

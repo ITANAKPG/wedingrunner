@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wedding Runner (Pelari Pengantin)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        /* Custom styles for classic game look */
+        .game-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        #gameCanvas {
+            border: 2px solid #333;
+            background-color: #f7f7f7;
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+            image-rendering: pixelated;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+            transition: background-color 2s ease-in-out; 
+        }
+        
+        .game-container {
+            padding: 20px;
+            background-color: #f0f0f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gameBox {
+            position: relative;
+        }
+
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px 40px;
+            border-radius: 10px;
+            text-align: center;
+            border: 4px solid #D946EF; 
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+            display: none;
+            cursor: pointer;
+            width: 80%; 
+            max-width: 400px;
+        }
+    </style>
+</head>
+<body class="game-container game-font">
+
+    <div id="gameBox" class="relative">
+        <canvas id="gameCanvas" width="800" height="250"></canvas>
+        
+        <!-- Kotak Pesan untuk Instruksi atau Game Over -->
+        <div id="messageBox" class="game-font">
+            <h2 class="text-xl font-bold text-pink-600 mb-4">Selamat Datang, Pasangan!</h2>
+            <p class="text-sm mb-6">Tekan Spasi atau Klik untuk Melompat.</p>
+            <button id="startButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm">
+                Mulai Perjalanan
+            </button>
+        </div>
+    </div>
+    
+    <div class="mt-4 text-center">
+        <p class="text-sm text-gray-700">Skor: <span id="scoreDisplay">0</span></p>
+        <p class="text-xs text-gray-500">Rintangan: Kotak Kado 🎁 dan Karangan Bunga 💐</p>
+        <p class="text-xs text-gray-400 mt-2">Status Aset: <span id="assetStatus">Memuat...</span></p>
+        <p class="text-xs text-gray-600 mt-1">Pastikan Anda menggunakan **Tautan Mentah (Raw Link)** GitHub!</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const messageBox = document.getElementById('messageBox');
+        const startButton = document.getElementById('startButton');
+        const assetStatus = document.getElementById('assetStatus');
+
+
+        // --- Global Image Variables & Loading ---
+        let run1Image = new Image();
+        let run2Image = new Image();
+        let jumpImage = new Image();
+        let imagesLoaded = 0;
+        let isDOMReady = false; 
+        const TOTAL_IMAGES = 3;
+
+        // =================================================================
+        // ** TEMPAT UNTUK MEMASUKKAN TAULAN MENTAH (RAW LINK) GITHUB **
+        // =================================================================
+        // BARIS 42: GANTI URL di bawah dengan Tautan Mentah (Raw Link) dari: RUN-1.png
+        run1Image.src = 'https://raw.githubusercontent.com/ITANAKPG/wedingrunner/main/RUN-1.png'; 
+        
+        // BARIS 45: GANTI URL di bawah dengan Tautan Mentah (Raw Link) dari: RUN-2.png
+        run2Image.src = 'https://raw.githubusercontent.com/ITANAKPG/wedingrunner/main/RUN-2.png'; 
+        
+        // BARIS 48: GANTI URL di bawah dengan Tautan Mentah (Raw Link) dari: Jump.png
+        jumpImage.src = 'https://raw.githubusercontent.com/ITANAKPG/wedingrunner/main/Jump.png';   
+        
+        // =================================================================
+
+        function checkReadyAndStart() {
+            if (imagesLoaded === TOTAL_IMAGES && isDOMReady) {
+                assetStatus.textContent = 'SIAP (URL Eksternal)';
+                assetStatus.classList.add('text-green-600');
+                initGameLogic(); 
+            }
+        }
+        
+        function imageLoaded() {
+            imagesLoaded++;
+            checkReadyAndStart(); 
+        }
+        
+        // Fungsi untuk mengatur listener pemuatan gambar
+        const setupImageListeners = (img, name) => {
+            img.onload = () => {
+                console.log(`[Asset Load SUCCESS] ${name} berhasil dimuat.`);
+                imageLoaded();
+            };
+            img.onerror = () => {
+                console.error(`[Asset Load ERROR] Gagal memuat ${name} dari URL eksternal. Pastikan itu adalah DIRECT LINK (GitHub Raw).`);
+                assetStatus.textContent = `ERROR memuat: ${name}. Menggunakan Placeholder.`;
+                assetStatus.classList.remove('text-green-600');
+                assetStatus.classList.add('text-red-600');
+                // Lanjutkan loading meskipun ada error agar game tetap bisa berjalan dengan placeholder visual
+                imageLoaded(); 
+            };
+        };
+
+        setupImageListeners(run1Image, 'RUN-1.png');
+        setupImageListeners(run2Image, 'RUN-2.png');
+        setupImageListeners(jumpImage, 'Jump.png');
+
+
+        // --- Konfigurasi Game (Disesuaikan dengan ukuran sprite 60x60) ---
+        const GROUND_Y = canvas.height - 30;
+        const COUPLE_WIDTH = 60; 
+        const COUPLE_HEIGHT = 60; 
+        const COUPLE_START_X = 50;
+        const GRAVITY = 0.6;
+        const JUMP_POWER = -12;
+        
+        // Konstanta untuk menentukan transisi waktu
+        const MORNING_END_FRAME = 1500; 
+        const DAY_END_FRAME = 3000;    
+        const DUSK_END_FRAME = 4500;   
+        
+        // Definisi Warna untuk transisi mulus
+        const SCENE_COLORS = {
+            morning: { bg: '#F7F7E8', ground: '#D4E297', cloud: '#ffffff', couple: '#B574F9' }, 
+            day:     { bg: '#ADD8E6', ground: '#8B9C68', cloud: '#ffffff', couple: '#724D9C' }, 
+            dusk:    { bg: '#FFB6C1', ground: '#A85764', cloud: '#FEDD00', couple: '#5C3979' }, 
+            night:   { bg: '#333366', ground: '#212140', cloud: '#D9D9D9', couple: '#D2A8FF' }  
+        };
+
+        // --- State Game ---
+        let gameRunning = false;
+        let gameOver = false;
+        let score = 0;
+        let speed = 5;
+        let speedIncreaseRate = 0.005;
+        let groundX = 0;
+        let groundSpeed = speed;
+        let animationFrameId;
+        
+        // State untuk Animasi Sun/Moon
+        let rotationAngle = 0; 
+        
+        // State Pasangan (Karakter)
+        let couple = {
+            x: COUPLE_START_X,
+            y: GROUND_Y - COUPLE_HEIGHT,
+            velY: 0,
+            isJumping: false,
+        };
+        
+        // Array Rintangan
+        let obstacles = [];
+        let obstacleTimer = 0;
+        let obstacleInterval = 90; 
+
+        // State Transisi (Waktu/Scene)
+        let currentScene = 'morning';
+        let currentColors = SCENE_COLORS.morning;
+
+        // --- Fungsi Utama Game ---
+
+        function init() {
+            canvas.width = window.innerWidth * 0.8 > 800 ? 800 : window.innerWidth * 0.8;
+            isDOMReady = true; 
+            checkReadyAndStart();
+        }
+        
+        function initGameLogic() {
+            drawInitialScreen();
+            messageBox.style.display = 'block';
+            
+            couple.x = COUPLE_START_X;
+            couple.y = GROUND_Y - COUPLE_HEIGHT;
+            couple.velY = 0;
+            couple.isJumping = false;
+        }
+
+
+        function startGame() {
+            if (gameOver) {
+                obstacles = [];
+                score = 0;
+                speed = 5;
+                couple.y = GROUND_Y - COUPLE_HEIGHT;
+                gameOver = false;
+                currentScene = 'morning';
+                currentColors = SCENE_COLORS.morning;
+                canvas.style.backgroundColor = SCENE_COLORS.morning.bg; 
+            }
+            gameRunning = true;
+            messageBox.style.display = 'none';
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+        }
+
+        function gameLoop() {
+            updateGame();
+            drawGame();
+            if (gameRunning) {
+                animationFrameId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function updateGame() {
+            if (!gameRunning) return;
+
+            score++;
+            speed += speedIncreaseRate;
+            scoreDisplay.textContent = Math.floor(score / 10);
+            groundSpeed = speed; 
+
+            rotationAngle = (rotationAngle + 0.01) % (2 * Math.PI); 
+
+            updateScene();
+            
+            couple.velY += GRAVITY;
+            couple.y += couple.velY;
+
+            if (couple.y >= GROUND_Y - COUPLE_HEIGHT) {
+                couple.y = GROUND_Y - COUPLE_HEIGHT;
+                couple.velY = 0;
+                couple.isJumping = false;
+            }
+
+            obstacleTimer++;
+            
+            if (obstacleTimer > obstacleInterval && Math.random() < 0.02) {
+                spawnObstacle();
+                obstacleInterval = Math.max(70, 90 - speed * 5); 
+                obstacleTimer = 0;
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                obstacles[i].x -= speed;
+
+                if (checkCollision(couple, obstacles[i])) {
+                    endGame();
+                    return;
+                }
+
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawSky();
+            drawGround();
+            drawObstacles();
+            drawCouple();
+        }
+
+        function drawInitialScreen() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = SCENE_COLORS.morning.ground;
+            ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, GROUND_Y);
+            ctx.lineTo(canvas.width, GROUND_Y);
+            ctx.stroke();
+            drawCouple(true);
+        }
+
+        // --- Fungsi Gambar Spesifik ---
+
+        function drawSky() {
+            ctx.fillStyle = currentColors.bg;
+            ctx.fillRect(0, 0, canvas.width, GROUND_Y);
+
+            let currentScale = 1 + Math.sin(rotationAngle * 4) * 0.04;
+
+            const celestialBody = (currentScene === 'night') ? 'moon' : 'sun';
+            
+            ctx.save();
+            ctx.translate(canvas.width - 50, 50);
+            ctx.scale(currentScale, currentScale); 
+
+            if (celestialBody === 'sun') {
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 10; 
+                ctx.beginPath();
+                ctx.arc(0, 0, 20, 0, 2 * Math.PI);
+                ctx.fill();
+            } else { 
+                ctx.fillStyle = currentColors.cloud;
+                for (let i = 0; i < 20; i++) {
+                    ctx.fillRect(Math.random() * canvas.width, Math.random() * GROUND_Y, 2, 2);
+                }
+                
+                ctx.fillStyle = currentColors.cloud;
+                ctx.shadowColor = currentColors.cloud;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(0, 0, 15, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            
+            ctx.shadowBlur = 0; 
+            ctx.restore();
+            
+            if (currentScene === 'morning' || currentScene === 'day') {
+                drawCloud(canvas.width - 150, 40, currentColors.cloud);
+                drawCloud(canvas.width - 50, 80, currentColors.cloud);
+            }
+        }
+
+        function drawCloud(x, y, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, 10, 0, 2 * Math.PI);
+            ctx.arc(x + 15, y, 15, 0, 2 * Math.PI);
+            ctx.arc(x + 30, y + 5, 12, 0, 2 * Math.PI);
+            ctx.arc(x + 45, y, 10, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        function drawGround() {
+            ctx.strokeStyle = currentColors.ground;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, GROUND_Y);
+            ctx.lineTo(canvas.width, GROUND_Y);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            
+            groundX = (groundX - groundSpeed) % 20;
+
+            for (let i = 0; i < canvas.width / 20 + 2; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * 20 + groundX, GROUND_Y);
+                ctx.lineTo(i * 20 + groundX + 5, GROUND_Y - 5);
+                ctx.stroke();
+            }
+        }
+
+        function drawCouple() {
+            let currentImage;
+
+            if (couple.isJumping) {
+                currentImage = jumpImage;
+            } else {
+                if (Math.floor(score / 5) % 2 === 0) {
+                    currentImage = run1Image;
+                } else {
+                    currentImage = run2Image;
+                }
+            }
+            
+            if (currentImage && currentImage.complete && currentImage.naturalWidth > 0) {
+                ctx.drawImage(
+                    currentImage, 
+                    couple.x, 
+                    couple.y, 
+                    COUPLE_WIDTH, 
+                    COUPLE_HEIGHT
+                );
+            }
+            
+            else {
+                 // Placeholder Darurat jika gambar GAGAL dimuat (Ini hanya muncul jika tautan eksternal Anda bermasalah)
+                 ctx.fillStyle = '#FF0000'; 
+                 ctx.fillRect(couple.x, couple.y, COUPLE_WIDTH, COUPLE_HEIGHT);
+                 ctx.fillStyle = 'white';
+                 ctx.font = '10px Arial';
+                 ctx.fillText('FAIL', couple.x + 15, couple.y + COUPLE_HEIGHT / 2);
+            }
+        }
+
+        function drawObstacles() {
+            obstacles.forEach(obs => {
+                if (obs.type === 'gift') {
+                    ctx.fillStyle = obs.color;
+                    ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                    
+                    ctx.fillStyle = '#dc2626';
+                    ctx.fillRect(obs.x + obs.width / 2 - 2, obs.y, 4, obs.height);
+                    ctx.fillRect(obs.x, obs.y + obs.height / 2 - 2, obs.width, 4);
+                } else if (obs.type === 'flower') {
+                    ctx.fillStyle = '#10b981'; 
+                    ctx.fillRect(obs.x + obs.width / 4, obs.y, obs.width / 2, obs.height);
+                    
+                    ctx.fillStyle = '#fb7185';
+                    ctx.beginPath();
+                    ctx.arc(obs.x + obs.width / 4, obs.y, 5, 0, 2 * Math.PI);
+                    ctx.arc(obs.x + obs.width * 3 / 4, obs.y, 5, 0, 2 * Math.PI);
+                    ctx.arc(obs.x + obs.width / 2, obs.y - 5, 5, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            });
+        }
+
+        function spawnObstacle() {
+            const obstacleTypes = [
+                { type: 'gift', width: 20, height: 40, color: '#facc15' }, 
+                { type: 'gift', width: 30, height: 50, color: '#3b82f6' }, 
+                { type: 'flower', width: 45, height: 25, color: '#10b981' } 
+            ];
+            
+            const randomType = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+            
+            const newObstacle = {
+                x: canvas.width,
+                width: randomType.width,
+                height: randomType.height,
+                y: GROUND_Y - randomType.height,
+                type: randomType.type,
+                color: randomType.color
+            };
+
+            obstacles.push(newObstacle);
+        }
+        
+        function updateScene() {
+            let nextScene;
+            if (score < MORNING_END_FRAME) { 
+                nextScene = 'morning';
+            } else if (score < DAY_END_FRAME) { 
+                nextScene = 'day';
+            } else if (score < DUSK_END_FRAME) { 
+                nextScene = 'dusk';
+            } else { 
+                nextScene = 'night';
+            }
+
+            if (nextScene !== currentScene) {
+                currentScene = nextScene;
+                canvas.style.backgroundColor = SCENE_COLORS[currentScene].bg;
+            }
+
+            currentColors = SCENE_COLORS[currentScene];
+        }
+
+        // --- Logika Interaksi ---
+
+        function jump() {
+            if (!gameRunning) return;
+            if (!couple.isJumping) {
+                couple.isJumping = true;
+                couple.velY = JUMP_POWER;
+            }
+        }
+
+        function handleKeyPress(e) {
+            if (e.code === 'Space' || e.code === 'ArrowUp') {
+                e.preventDefault();
+                if (!gameRunning && gameOver) {
+                    startGame();
+                } else if (gameRunning) {
+                    jump();
+                }
+            }
+        }
+
+        function handleClick() {
+            if (!gameRunning && gameOver) {
+                startGame();
+            } else if (!gameRunning && messageBox.style.display === 'block') {
+                // Jangan lakukan apa-apa, biarkan tombol yang menangani
+            } else if (gameRunning) {
+                jump();
+            }
+        }
+
+        // --- Deteksi Tabrakan (AABB) ---
+        function checkCollision(c, o) {
+            const coupleRect = {
+                x: c.x,
+                y: c.y,
+                w: COUPLE_WIDTH,
+                h: COUPLE_HEIGHT
+            };
+
+            const obstacleRect = {
+                x: o.x,
+                y: o.y,
+                w: o.width,
+                h: o.height
+            };
+
+            return coupleRect.x < obstacleRect.x + obstacleRect.w &&
+                   coupleRect.x + coupleRect.w > obstacleRect.x &&
+                   coupleRect.y < obstacleRect.y + obstacleRect.h &&
+                   coupleRect.y + coupleRect.h > obstacleRect.y;
+        }
+
+        // --- Game Over ---
+        function endGame() {
+            gameRunning = false;
+            gameOver = true;
+            cancelAnimationFrame(animationFrameId);
+            
+            messageBox.innerHTML = `
+                <h2 class="text-xl font-bold text-red-600 mb-2">Game Over!</h2>
+                <p class="text-sm mb-4">Skor Anda: <span class="text-pink-600">${Math.floor(score / 10)}</span></p>
+                <p class="text-xs mb-6">Perjalanan pernikahan harus melewati rintangan! Coba lagi.</p>
+                <button id="restartButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm">
+                    Mulai Ulang (Spasi)
+                </button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+            messageBox.style.display = 'block';
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('keydown', handleKeyPress);
+        canvas.addEventListener('click', handleClick);
+        startButton.addEventListener('click', startGame);
+
+        window.onload = init;
+        
+    </script>
+
+</body>
+</html>

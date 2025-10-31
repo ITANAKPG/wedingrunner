@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wedding Runner (Pelari Pengantin)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        /* Custom styles for classic game look */
+        .game-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        #gameCanvas {
+            border: 2px solid #333;
+            background-color: #f7f7f7;
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+            image-rendering: pixelated;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+            transition: background-color 2s ease-in-out; 
+        }
+        
+        .game-container {
+            padding: 20px;
+            background-color: #f0f0f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Message Box styling */
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 30px;
+            background-color: white;
+            border: 4px solid #f9a8d4;
+            border-radius: 12px;
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            z-index: 10;
+        }
+
+        /* --- LOADING OVERLAY STYLES --- */
+        #loadingOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #ffe4e1; /* Warna latar belakang lembut */
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            transition: opacity 0.5s ease-out;
+            opacity: 1;
+        }
+
+        .spinner {
+            border: 8px solid rgba(255, 255, 255, 0.5);
+            border-top-color: #ff69b4; /* Pink terang */
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* -------------------------------- */
+
+        @media (max-width: 640px) {
+            .game-container {
+                padding: 10px;
+            }
+            #messageBox {
+                width: 80%;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="game-font">
+        <div class="spinner"></div>
+        <p class="text-xl text-pink-600">Memuat Aset Pernikahan...</p>
+        <p id="loadingStatus" class="text-base mt-2 text-gray-700">0%</p>
+    </div>
+
+    <div class="game-container">
+        <div id="app" class="w-full max-w-xl bg-white shadow-xl rounded-lg p-4">
+            <h1 class="text-3xl game-font text-center text-pink-600 mb-4 tracking-tight">
+                Wedding Runner
+            </h1>
+            
+            <!-- Canvas Container -->
+            <div class="relative">
+                <canvas id="gameCanvas" width="800" height="400"></canvas>
+                
+                <!-- Message Box/Menu -->
+                <div id="messageBox" class="game-font hidden">
+                    <!-- Content injected by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Score and Controls Info -->
+            <div class="flex justify-between items-center mt-4 text-sm game-font">
+                <div id="scoreDisplay" class="text-gray-700">
+                    Skor: <span id="currentScore" class="text-pink-600 font-bold">0</span>
+                </div>
+                <div id="controlsInfo" class="text-gray-500 text-xs">
+                    Aksi: Spasi / Klik / Sentuh
+                </div>
+            </div>
+            
+            <!-- Mobile/Action Button -->
+            <div class="mt-4 text-center">
+                <button id="startButton" class="game-font px-6 py-3 bg-pink-500 text-white rounded-full shadow-lg hover:bg-pink-600 transition duration-150 transform hover:scale-105 hidden">
+                    Mulai Game
+                </button>
+            </div>
+
+            <!-- Debug/Status Info -->
+            <div id="debugInfo" class="mt-4 text-xs text-center text-gray-400"></div>
+
+        </div>
+    </div>
+
+    <script>
+        // Global variables for environment
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const messageBox = document.getElementById('messageBox');
+        const startButton = document.getElementById('startButton');
+        const loadingOverlay = document.getElementById('loadingOverlay'); // NEW
+        const loadingStatus = document.getElementById('loadingStatus');   // NEW
+
+        // Game State
+        let gameRunning = false;
+        let gameOver = false;
+        let animationFrameId;
+        let score = 0;
+        let speed = 6;
+        let gravity = 0.5;
+        let lastFrameTime = 0;
+        const targetFrameTime = 1000 / 60; // 60 FPS
+        
+        // --- KONFIGURASI KESULITAN & SKALA ---
+        const INITIAL_SPEED = 6;
+        const MAX_SPEED = 20; // Batas kecepatan maksimum
+        const MIN_SCALE = 0.5; // Batas skala minimum
+        const DIFFICULTY_SCORE_LIMIT = 5000; // Skor untuk mencapai skala/kecepatan maksimum
+        // ------------------------------------
+
+        // --- KONFIGURASI SIKLUS HARI/MALAM ---
+        let gameCycle = 0; // Menghitung frame sejak game dimulai
+        const CYCLE_LENGTH = 4800; // Total frame untuk satu siklus penuh (~80 detik)
+        const SUN_MOON_RADIUS = 30; // Ukuran matahari/bulan
+        const SUN_MOON_GLOW_SIZE = 40; // Ukuran efek bias cahaya
+        // ------------------------------------
+
+        // --- KONFIGURASI HUJAN ---
+        let isRaining = false;
+        let raindrops = [];
+        const RAINDROP_COUNT = 150;
+        const RAIN_COLOR = 'rgba(174,194,224,0.7)';
+        const RAIN_CHANCE = 0.005; 
+        // -------------------------
+
+        // --- KONFIGURASI AWAN ---
+        let clouds = [];
+        const CLOUD_COUNT = 5;
+        // -------------------------
+        
+        // --- KONFIGURASI UKURAN ASET (Original/Base Size) ---
+        const BASE_PLAYER_WIDTH = 150; 
+        const BASE_PLAYER_HEIGHT = 210;
+        const BASE_OBSTACLE_WIDTH = 300; 
+        const BASE_OBSTACLE_HEIGHT = 300;
+        const Y_VISUAL_OFFSET_DEFAULT = 30; 
+        const Y_VISUAL_OFFSET_RINTANG1 = 45; 
+        // ------------------------------------
+
+        // --- CAMERA STATE ---
+        let cameraOffsetY = 0; 
+        const CAMERA_ACTIVATION_Y = canvas.height * 0.4; 
+        // ---------------------------------------------------
+        
+        // Couple (Player) State
+        const couple = {
+            x: 50,
+            y: 0,
+            width: BASE_PLAYER_WIDTH,
+            height: BASE_PLAYER_HEIGHT,
+            vy: 0,
+            isJumping: false,
+            groundY: 0, 
+            frameIndex: 0,
+            frameDelay: 5, 
+            frameCounter: 0
+        };
+
+        // Obstacles State
+        let obstacles = [];
+        let obstacleSpawnRate = 180; 
+        let obstacleSpawnCounter = 0;
+
+        // Ground/Background State
+        const ground = {
+            y: canvas.height - 50,
+            height: 50,
+            color: '#d4edc5'
+        };
+        
+        // Init Clouds (can be called immediately)
+        function initClouds() {
+            clouds = [];
+            for(let i = 0; i < CLOUD_COUNT; i++) {
+                clouds.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * (canvas.height / 3),
+                    w: Math.random() * 80 + 100,
+                    h: Math.random() * 20 + 30,
+                    speed: Math.random() * 0.5 + 0.1 
+                });
+            }
+        }
+        
+        initClouds();
+
+
+        // Variabel untuk melacak status pemuatan gambar
+        let allImagesLoaded = 0;
+        let totalImagesToLoad = 0;
+        
+        // Base URL dari repositori GitHub
+        const BASE_URL = 'https://raw.githubusercontent.com/ITANAKPG/wedingrunner/main/';
+        
+        // --- NEW: Loading Status Update Functions ---
+        function updateLoadingStatus() {
+            if (totalImagesToLoad === 0) return;
+            const percent = Math.floor((allImagesLoaded / totalImagesToLoad) * 100);
+            loadingStatus.textContent = `${percent}%`;
+        }
+
+        function hideLoadingScreen() {
+            loadingOverlay.style.opacity = '0';
+            setTimeout(() => {
+                loadingOverlay.style.display = 'none';
+            }, 500);
+        }
+        // ---------------------------------------------
+
+
+        // --- Image Loading ---
+        function LoadImage(src) {
+            const img = new Image();
+            
+            img.onload = () => {
+                allImagesLoaded++;
+                updateLoadingStatus(); // Update status pemuatan
+                if (allImagesLoaded === totalImagesToLoad) {
+                    // Set groundY saat game dimulai, menggunakan ukuran BASE
+                    couple.groundY = ground.y - couple.height + Y_VISUAL_OFFSET_DEFAULT; 
+                    couple.y = couple.groundY; 
+                    hideLoadingScreen(); // Sembunyikan layar loading
+                    showStartScreen(); // Tampilkan menu awal
+                }
+            };
+            img.onerror = () => {
+                console.error(`Gagal memuat gambar: ${src}. Harap periksa URL/path.`);
+                // Lanjutkan meski ada error, tapi berikan notifikasi
+                allImagesLoaded++;
+                updateLoadingStatus();
+                if (allImagesLoaded === totalImagesToLoad) {
+                    hideLoadingScreen();
+                    showStartScreen();
+                }
+            };
+
+            img.src = src;
+            return img;
+        }
+
+        // --- Definisi Gambar & Hitung Total ---
+        const run1Src = `${BASE_URL}RUN-1.png`; 
+        const run2Src = `${BASE_URL}RUN-2.png`; 
+        const jumpSrc = `${BASE_URL}Jump.png`; 
+        
+        const runImages = [run1Src, run2Src].map(src => LoadImage(src));
+        const jumpImage = LoadImage(jumpSrc);
+        
+        const obstacleAnimationData = {
+            'RINTANG1': [`${BASE_URL}RINTANG1_1.png`, `${BASE_URL}RINTANG1_2.png`],
+            'RINTANG2': [`${BASE_URL}RINTANG2_1.png`, `${BASE_URL}RINTANG2_2.png`],
+            'RINTANG3': [`${BASE_URL}RINTANG3_1.png`, `${BASE_URL}RINTANG3_2.png`], 
+            'RINTANG4': [`${BASE_URL}RINTANG4_1.png`, `${BASE_URL}RINTANG4_2.png`], 
+        };
+
+        const loadedObstacleFrames = {};
+        
+        // Hitung total gambar yang akan dimuat
+        totalImagesToLoad = runImages.length + 1; // 2 run + 1 jump
+        for (const type in obstacleAnimationData) {
+            obstacleAnimationData[type].forEach(src => {
+                totalImagesToLoad++;
+            });
+        }
+
+        // Mulai memuat semua gambar rintangan
+        for (const type in obstacleAnimationData) {
+            loadedObstacleFrames[type] = obstacleAnimationData[type].map(src => {
+                return LoadImage(src);
+            });
+        }
+        // ------------------------------------
+
+
+        // --- Game Setup and Loop ---
+
+        function showStartScreen() {
+            if (gameRunning || gameOver) return; 
+
+            messageBox.innerHTML = `
+                <h2 class="text-xl font-bold text-pink-600 mb-2">Wedding Runner!</h2>
+                <p class="text-sm mb-4">Uji kekuatan cinta Anda!</p>
+                <button id="restartButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm game-font">
+                    Mulai Game (Spasi)
+                </button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+            messageBox.style.display = 'block';
+            startButton.style.display = 'none'; 
+        }
+
+
+        function startGame() {
+            if (gameRunning) return;
+            gameRunning = true;
+            gameOver = false;
+            score = 0;
+            speed = INITIAL_SPEED; // Reset kecepatan awal
+            obstacles = [];
+            obstacleSpawnCounter = 0;
+            gameCycle = 0; 
+            isRaining = false;
+            raindrops = [];
+            
+            cameraOffsetY = 0; 
+            
+            // Set posisi awal pemain berdasarkan groundY, menggunakan ukuran BASE
+            const scale = getScaleFactor();
+            couple.groundY = ground.y - BASE_PLAYER_HEIGHT * scale + Y_VISUAL_OFFSET_DEFAULT * scale; 
+            couple.y = couple.groundY;
+            
+            couple.vy = 0;
+            couple.isJumping = false;
+            
+            messageBox.style.display = 'none';
+            startButton.style.display = 'none';
+
+            lastFrameTime = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (!gameRunning) return;
+
+            const deltaTime = timestamp - lastFrameTime;
+
+            if (deltaTime >= targetFrameTime) {
+                updateGame();
+                drawGame();
+                lastFrameTime = timestamp - (deltaTime % targetFrameTime);
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- KESULITAN & SKALA FAKTOR ---
+        function getScaleFactor() {
+            // Skala berkisar dari 1.0 (awal) hingga MIN_SCALE (0.5) pada DIFFICULTY_SCORE_LIMIT
+            const normalizedScore = Math.min(score, DIFFICULTY_SCORE_LIMIT);
+            const scaleRange = 1.0 - MIN_SCALE; // Jarak: 0.5
+            const reduction = scaleRange * (normalizedScore / DIFFICULTY_SCORE_LIMIT);
+            return 1.0 - reduction; // Skala akan berkurang dari 1.0 ke 0.5
+        }
+
+        function updateSpeed() {
+            // Kecepatan berkisar dari INITIAL_SPEED (6) hingga MAX_SPEED (20)
+            const normalizedScore = Math.min(score, DIFFICULTY_SCORE_LIMIT);
+            const speedIncrease = MAX_SPEED - INITIAL_SPEED; // Jarak: 14
+            const increase = speedIncrease * (normalizedScore / DIFFICULTY_SCORE_LIMIT);
+            speed = INITIAL_SPEED + increase;
+        }
+        // ---------------------------------
+
+        // --- Update Logic (Adjusted for Scale) ---
+
+        function updateGame() {
+            updateCouple();
+            updateObstacles();
+            checkCollisions();
+            updateScore();
+            updateSpeed(); // Update kecepatan berdasarkan skor
+            
+            gameCycle = (gameCycle + 1) % CYCLE_LENGTH;
+            updateRain(); 
+            updateClouds(); 
+        }
+        
+        function updateClouds() {
+            clouds.forEach(cloud => {
+                // Awan bergerak ke kiri dengan kecepatan sangat lambat
+                cloud.x -= cloud.speed;
+                // Jika awan keluar dari kiri, pindahkan ke kanan
+                if (cloud.x + cloud.w < 0) {
+                    cloud.x = canvas.width;
+                    cloud.y = Math.random() * (canvas.height / 3);
+                    cloud.w = Math.random() * 80 + 100;
+                    cloud.h = Math.random() * 20 + 30;
+                    cloud.speed = Math.random() * 0.5 + 0.1;
+                }
+            });
+        }
+        
+        function updateCouple() {
+            // Gunakan ukuran dinamis untuk perhitungan lompatan
+            const scale = getScaleFactor();
+            const scaledHeight = BASE_PLAYER_HEIGHT * scale;
+            const dynamicGroundY = ground.y - scaledHeight + Y_VISUAL_OFFSET_DEFAULT * scale;
+
+            if (couple.isJumping) {
+                couple.vy += gravity;
+                couple.y += couple.vy;
+
+                if (couple.y < CAMERA_ACTIVATION_Y) {
+                    cameraOffsetY = CAMERA_ACTIVATION_Y - couple.y;
+                }
+                
+                cameraOffsetY = Math.max(0, cameraOffsetY); 
+
+                // Check for landing menggunakan dynamicGroundY
+                if (couple.y >= dynamicGroundY) {
+                    couple.y = dynamicGroundY;
+                    couple.isJumping = false;
+                    couple.vy = 0;
+                    cameraOffsetY = 0; 
+                }
+            } else {
+                // Selalu pastikan couple berada di dynamicGroundY saat tidak melompat
+                couple.y = dynamicGroundY; 
+                couple.groundY = dynamicGroundY; // Simpan groundY yang diskalakan
+                cameraOffsetY = 0; 
+            }
+
+            couple.frameCounter++;
+            if (couple.frameCounter >= couple.frameDelay) {
+                couple.frameIndex = (couple.frameIndex + 1) % runImages.length;
+                couple.frameCounter = 0;
+            }
+        }
+
+        function updateObstacles() {
+            obstacles.forEach(obstacle => {
+                obstacle.x -= speed;
+                
+                obstacle.frameCounter++;
+                if (obstacle.frameCounter >= obstacle.frameDelay) {
+                    obstacle.frameIndex = (obstacle.frameIndex + 1) % obstacle.frames.length;
+                    obstacle.frameCounter = 0;
+                }
+            });
+
+            obstacles = obstacles.filter(obstacle => obstacle.x + obstacle.width * getScaleFactor() > 0);
+
+            obstacleSpawnCounter++;
+            if (obstacleSpawnCounter >= obstacleSpawnRate) {
+                spawnObstacle();
+                obstacleSpawnCounter = 0;
+                
+                // Gradually increase spawn rate (make it harder)
+                obstacleSpawnRate = Math.max(90, obstacleSpawnRate - 1); 
+            }
+        }
+
+        function spawnObstacle() {
+            const obstacleKeys = Object.keys(loadedObstacleFrames);
+            const type = obstacleKeys[Math.floor(Math.random() * obstacleKeys.length)];
+            const frames = loadedObstacleFrames[type]; 
+            
+            // NOTE: width/height di objek obstacle adalah BASE size. Skala akan diterapkan saat draw/check.
+            const width = BASE_OBSTACLE_WIDTH; 
+            const height = BASE_OBSTACLE_HEIGHT;
+            
+            const visualOffset = (type === 'RINTANG1') ? Y_VISUAL_OFFSET_RINTANG1 : Y_VISUAL_OFFSET_DEFAULT;
+
+            const newObstacle = {
+                x: canvas.width,
+                y: ground.y - height + visualOffset, // Y disimpan dalam BASE size (akan diskalakan saat draw)
+                width: width,
+                height: height,
+                frames: frames, 
+                type: type, 
+                frameIndex: 0,
+                frameDelay: 10, 
+                frameCounter: 0,
+            };
+
+            obstacles.push(newObstacle);
+        }
+
+        function updateScore() {
+            score++;
+            document.getElementById('currentScore').textContent = Math.floor(score / 10);
+        }
+        
+        // --- Rain Logic ---
+        function initRain() {
+            raindrops = [];
+            for (let i = 0; i < RAINDROP_COUNT; i++) {
+                raindrops.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    length: Math.random() * 20 + 10,
+                    speed: Math.random() * speed + 5 
+                });
+            }
+        }
+
+        function updateRain() {
+            const currentCycleProgress = gameCycle / CYCLE_LENGTH;
+            // Malam sekarang 0.60 hingga 0.85
+            const isNightPhase = currentCycleProgress > 0.60 && currentCycleProgress < 0.85; 
+
+            if (isNightPhase && !isRaining && Math.random() < RAIN_CHANCE * 2) {
+                isRaining = true;
+                initRain();
+            } else if (!isNightPhase && isRaining) {
+                isRaining = false;
+                raindrops = [];
+            }
+
+            if (isRaining) {
+                for (let i = 0; i < RAINDROP_COUNT; i++) {
+                    const drop = raindrops[i];
+                    drop.y += drop.speed;
+                    drop.x -= speed * 0.2; 
+
+                    if (drop.y > canvas.height + cameraOffsetY) {
+                        drop.y = -drop.length + cameraOffsetY;
+                        drop.x = Math.random() * canvas.width;
+                    }
+                    if (drop.x < 0) {
+                        drop.x = canvas.width;
+                    }
+                }
+            }
+        }
+
+        function drawRain() {
+            if (!isRaining) return;
+
+            ctx.save();
+            ctx.strokeStyle = RAIN_COLOR;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            raindrops.forEach(drop => {
+                ctx.moveTo(drop.x, drop.y + cameraOffsetY);
+                ctx.lineTo(drop.x, drop.y + drop.length + cameraOffsetY);
+            });
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // --- Drawing Logic (Adjusted for Scale) ---
+
+        function getSkyColors(cycleProgress) {
+            const hexToRgb = (hex) => {
+                const bigint = parseInt(hex.slice(1), 16);
+                return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+            };
+            const rgbToHex = (c) => `#${c.r.toString(16).padStart(2, '0')}${c.g.toString(16).padStart(2, '0')}${c.b.toString(16).padStart(2, '0')}`;
+            const lerpColor = (c1, c2, t) => ({
+                r: Math.round(c1.r + (c2.r - c1.r) * t),
+                g: Math.round(c1.g + (c2.g - c1.g) * t),
+                b: Math.round(c1.b + (c2.b - c1.b) * t)
+            });
+
+            // Keyframe Colors (Top and Bottom of Gradient)
+            const DAWN_T = hexToRgb('#87CEEB'); const DAWN_B = hexToRgb('#FFFFFF'); 
+            const DAY_T = hexToRgb('#007FFF'); const DAY_B = hexToRgb('#87CEEB');
+            const DUSK_T = hexToRgb('#8A2BE2'); const DUSK_B = hexToRgb('#FF8C00'); 
+            const NIGHT_T = hexToRgb('#0A0A0A'); const NIGHT_B = hexToRgb('#404040'); 
+
+            let colorT, colorB;
+            let t;
+            
+            // Phases (Disesuaikan untuk malam lebih lama):
+            // P1: 0.85 -> 0.20 (Dawn/Morning - NIGHT to DAY)
+            // P2: 0.20 -> 0.40 (Day - Static Day)
+            // P3: 0.40 -> 0.60 (Dusk - DAY to DUSK)
+            // P4: 0.60 -> 0.85 (Night - DUSK to NIGHT, Malam lebih lama)
+            
+            if (cycleProgress >= 0.85 || cycleProgress < 0.20) { 
+                // P1: Malam (0.85) ke Pagi (0.20)
+                if (cycleProgress >= 0.85) { // 0.85 -> 1.0 (NIGHT -> DAWN)
+                    t = (cycleProgress - 0.85) / 0.35; // 0.35 = 1.0 + 0.20 - 0.85
+                    colorT = lerpColor(NIGHT_T, DAWN_T, t);
+                    colorB = lerpColor(NIGHT_B, DAWN_B, t);
+                } else { // 0.0 -> 0.20 (DAWN -> DAY)
+                    t = cycleProgress / 0.20; 
+                    colorT = lerpColor(DAWN_T, DAY_T, t);
+                    colorB = lerpColor(DAWN_B, DAY_B, t);
+                }
+            } else if (cycleProgress < 0.40) {
+                // P2: Siang (Static Day)
+                t = (cycleProgress - 0.20) / 0.20; 
+                colorT = DAY_T;
+                colorB = DAY_B;
+            } else if (cycleProgress < 0.60) {
+                // P3: Senja (Dusk)
+                t = (cycleProgress - 0.40) / 0.20;
+                colorT = lerpColor(DAY_T, DUSK_T, t);
+                colorB = lerpColor(DAY_B, DUSK_B, t);
+            } else { // cycleProgress >= 0.60
+                // P4: Malam (Night) - Mulai lebih cepat, berakhir lebih lambat
+                t = (cycleProgress - 0.60) / 0.25; // 0.25 adalah durasi fase malam
+                colorT = lerpColor(DUSK_T, NIGHT_T, t);
+                colorB = lerpColor(DUSK_B, NIGHT_B, t);
+            }
+
+            return {
+                topColor: rgbToHex(colorT),
+                bottomColor: rgbToHex(colorB)
+            };
+        }
+        
+        function drawSunMoon(cycleProgress) {
+            
+            let isSun;
+            let currentProgress;
+            
+            // Matahari aktif di Pagi/Siang/Senja (0.85 -> 0.60)
+            if (cycleProgress < 0.60 || cycleProgress >= 0.85) { 
+                isSun = true;
+                // Normalisasi untuk Matahari (0.85 -> 1.0 -> 0.60)
+                currentProgress = (cycleProgress < 0.60) ? (cycleProgress + 0.15) : (cycleProgress - 0.85);
+                currentProgress = currentProgress / 0.75; 
+            } else { 
+                // Bulan aktif saat Malam (0.60 -> 0.85)
+                isSun = false;
+                // Normalisasi untuk Bulan (0.60 -> 0.85)
+                currentProgress = (cycleProgress - 0.60) / 0.25; 
+            }
+            
+            const x = canvas.width * currentProgress; 
+            const yOffset = Math.sin(Math.PI * currentProgress) * (canvas.height * 0.8);
+            const y = canvas.height * 0.8 - yOffset;
+            
+            const color = isSun ? 'gold' : 'white';
+
+            ctx.save();
+            ctx.beginPath();
+            
+            ctx.shadowColor = color;
+            ctx.shadowBlur = SUN_MOON_GLOW_SIZE;
+            
+            ctx.arc(x, y + cameraOffsetY, SUN_MOON_RADIUS, 0, Math.PI * 2); 
+            ctx.fillStyle = color;
+            ctx.fill();
+            
+            ctx.shadowBlur = 0; 
+
+            if (!isSun) {
+                const currentSkyColors = getSkyColors(cycleProgress);
+                ctx.fillStyle = currentSkyColors.topColor; 
+                ctx.beginPath();
+                ctx.arc(x - 10, y + cameraOffsetY, SUN_MOON_RADIUS, 0, Math.PI * 2); 
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+        
+        function drawClouds(cycleProgress) {
+            // Awan tidak muncul saat Malam (0.60 -> 0.85)
+            if (cycleProgress > 0.60 && cycleProgress < 0.85) return; 
+
+            ctx.save();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; 
+            
+            clouds.forEach(cloud => {
+                // Draw simple rounded cloud shapes
+                ctx.beginPath();
+                const y_pos = cloud.y + cameraOffsetY; 
+                
+                ctx.arc(cloud.x, y_pos, cloud.h, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.w * 0.4, y_pos - cloud.h * 0.5, cloud.h * 1.2, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.w * 0.8, y_pos, cloud.h, 0, Math.PI * 2);
+                
+                ctx.fill();
+            });
+            ctx.restore();
+        }
+        
+        let grassOffset = 0;
+        function drawGrass() {
+            // Offset rumput bergerak sesuai kecepatan game
+            grassOffset = (grassOffset + speed * 0.5) % 40; 
+            
+            ctx.save();
+            
+            ctx.fillStyle = '#558B2F'; 
+
+            const grassY = ground.y + cameraOffsetY - 10; 
+            
+            ctx.beginPath();
+            for (let i = 0; i < canvas.width + 40; i += 40) {
+                // Gambar gelombang/gunung kecil
+                ctx.moveTo(i - grassOffset, grassY);
+                ctx.lineTo(i + 10 - grassOffset, grassY - 15);
+                ctx.lineTo(i + 20 - grassOffset, grassY - 5);
+                ctx.lineTo(i + 30 - grassOffset, grassY - 18);
+                ctx.lineTo(i + 40 - grassOffset, grassY);
+            }
+            
+            ctx.lineTo(canvas.width, ground.y + cameraOffsetY);
+            ctx.lineTo(0, ground.y + cameraOffsetY);
+            ctx.closePath();
+            
+            ctx.fill();
+            ctx.restore();
+        }
+
+
+        function drawGame() {
+            const cycleProgress = gameCycle / CYCLE_LENGTH;
+            const skyColors = getSkyColors(cycleProgress);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Gradasi Langit Penuh
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, skyColors.topColor);
+            gradient.addColorStop(1, skyColors.bottomColor);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height); 
+
+            // 2. Gambar Awan
+            drawClouds(cycleProgress);
+
+            // 3. Gambar Matahari/Bulan
+            drawSunMoon(cycleProgress);
+
+            // 4. Draw ground (APPLY cameraOffsetY)
+            ctx.fillStyle = ground.color;
+            ctx.fillRect(0, ground.y + cameraOffsetY, canvas.width, ground.height);
+            
+            // 5. Gambar Rumput
+            drawGrass();
+            
+            // 6. Draw couple and obstacles (APPLY cameraOffsetY & SKALA)
+            drawObstacles();
+            drawCouple();
+
+            // 7. Draw Rain
+            drawRain();
+
+            // 8. Draw score 
+            ctx.fillStyle = '#333';
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText(`SCORE: ${Math.floor(score / 10)}`, canvas.width - 200, 30);
+        }
+
+        function drawCouple() {
+            const scale = getScaleFactor();
+            const scaledW = BASE_PLAYER_WIDTH * scale;
+            const scaledH = BASE_PLAYER_HEIGHT * scale;
+            
+            let currentImage = couple.isJumping ? jumpImage : runImages[couple.frameIndex];
+
+            if (currentImage && currentImage.complete) {
+                // couple.y sudah dihitung dengan skala di updateCouple
+                ctx.drawImage(
+                    currentImage, 
+                    couple.x, 
+                    couple.y + cameraOffsetY, 
+                    scaledW, 
+                    scaledH // Gunakan scaledH
+                );
+            }
+        }
+
+        function drawObstacles() {
+            const scale = getScaleFactor();
+            
+            obstacles.forEach(obstacle => {
+                const scaledW = BASE_OBSTACLE_WIDTH * scale;
+                const scaledH = BASE_OBSTACLE_HEIGHT * scale;
+                
+                // Hitung posisi Y yang diskalakan agar tetap di atas tanah
+                const visualOffsetBase = (obstacle.type === 'RINTANG1') ? Y_VISUAL_OFFSET_RINTANG1 : Y_VISUAL_OFFSET_DEFAULT;
+                const scaledY = ground.y - scaledH + visualOffsetBase * scale;
+
+                const currentFrame = obstacle.frames[obstacle.frameIndex];
+                if(currentFrame && currentFrame.complete) {
+                    ctx.drawImage(
+                        currentFrame, 
+                        obstacle.x, 
+                        scaledY + cameraOffsetY, // Gunakan scaledY
+                        scaledW, 
+                        scaledH
+                    );
+                }
+            });
+        }
+        
+        // --- Collision Detection & Game Over Logic (Adjusted for Scale) ---
+
+        function getCoupleHitbox(couple) {
+            const scale = getScaleFactor();
+            const scaledW = BASE_PLAYER_WIDTH * scale;
+            const scaledH = BASE_PLAYER_HEIGHT * scale;
+            
+            // Hitbox adjustment (BASE values)
+            const offsetX_BASE = 40;
+            const offsetY_BASE = 30;
+            const widthAdj_BASE = 80;
+            const heightAdj_BASE = 30;
+
+            // Apply scale to adjustments
+            const offsetX = offsetX_BASE * scale;
+            const offsetY = offsetY_BASE * scale;
+            const widthAdj = widthAdj_BASE * scale;
+            const heightAdj = heightAdj_BASE * scale;
+            
+            return {
+                x: couple.x + offsetX,
+                y: couple.y + offsetY,
+                w: scaledW - widthAdj,
+                h: scaledH - heightAdj
+            };
+        }
+
+        function getObstacleHitbox(obstacle) {
+            const scale = getScaleFactor();
+            const scaledW = BASE_OBSTACLE_WIDTH * scale;
+            const scaledH = BASE_OBSTACLE_HEIGHT * scale;
+            
+            let offsetX_BASE, offsetY_BASE, widthAdj_BASE, heightAdj_BASE;
+
+            switch (obstacle.type) {
+                case 'RINTANG1':
+                    // PENYESUAIAN RINTANGAN 1 (Hitbox yang lebih kecil dan fokus di bawah)
+                    offsetX_BASE = 100;
+                    widthAdj_BASE = 180; 
+                    offsetY_BASE = 150;    
+                    heightAdj_BASE = 150;  
+                    break;
+                case 'RINTANG2':
+                    offsetX_BASE = 95;   offsetY_BASE = 150;  widthAdj_BASE = 190; heightAdj_BASE = 150; 
+                    break;
+                case 'RINTANG3':
+                    offsetX_BASE = 100;   offsetY_BASE = 160;    widthAdj_BASE = 200;  heightAdj_BASE = 160; 
+                    break;
+                case 'RINTANG4':
+                    offsetX_BASE = 120;   offsetY_BASE = 180;    widthAdj_BASE = 240;  heightAdj_BASE = 180; 
+                    break;
+                default:
+                    offsetX_BASE = 0;   offsetY_BASE = 0;    widthAdj_BASE = 0;  heightAdj_BASE = 0; 
+            }
+            
+            // Hitung posisi Y yang diskalakan agar tetap di atas tanah
+            const visualOffsetBase = (obstacle.type === 'RINTANG1') ? Y_VISUAL_OFFSET_RINTANG1 : Y_VISUAL_OFFSET_DEFAULT;
+            const scaledY = ground.y - scaledH + visualOffsetBase * scale;
+
+            // Apply scale to adjustments
+            const offsetX = offsetX_BASE * scale;
+            const offsetY = offsetY_BASE * scale;
+            const widthAdj = widthAdj_BASE * scale;
+            const heightAdj = heightAdj_BASE * scale;
+
+            return {
+                x: obstacle.x + offsetX,
+                y: scaledY + offsetY, // Gunakan scaledY
+                w: scaledW - widthAdj,
+                h: scaledH - heightAdj
+            };
+        }
+
+        function checkCollisions() {
+            for (const obstacle of obstacles) {
+                if (isColliding(couple, obstacle)) {
+                    endGame();
+                    break;
+                }
+            }
+        }
+
+        function isColliding(couple, obstacle) {
+            const coupleRect = getCoupleHitbox(couple);
+            const obstacleRect = getObstacleHitbox(obstacle);
+
+            return coupleRect.x < obstacleRect.x + obstacleRect.w &&
+                   coupleRect.x + coupleRect.w > obstacleRect.x &&
+                   coupleRect.y < obstacleRect.y + obstacleRect.h &&
+                   coupleRect.y + coupleRect.h > obstacleRect.y;
+        }
+
+        function endGame() {
+            gameRunning = false;
+            gameOver = true;
+            cancelAnimationFrame(animationFrameId);
+            
+            messageBox.innerHTML = `
+                <h2 class="text-xl font-bold text-red-600 mb-2">Game Over!</h2>
+                <p class="text-sm mb-4">Skor Anda: <span class="text-pink-600">${Math.floor(score / 10)}</span></p>
+                <p class="text-xs mb-6">Perjalanan pernikahan harus melewati rintangan! Coba lagi.</p>
+                <button id="restartButton" class="px-4 py-2 bg-pink-500 text-white rounded shadow hover:bg-pink-600 text-sm game-font">
+                    Mulai Ulang (Spasi)
+                </button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+            messageBox.style.display = 'block';
+        }
+
+        // --- Event Listeners ---
+        function handleKeyPress(event) {
+            if (event.code === 'Space') {
+                event.preventDefault(); 
+                if (gameOver) {
+                    startGame();
+                } else {
+                    jump();
+                }
+            }
+        }
+
+        function handleClick(event) {
+            if (gameOver) {
+                 if(messageBox.style.display !== 'none' && event.target.id === 'restartButton') {
+                    return; 
+                 }
+                startGame();
+            } else if (gameRunning) {
+                jump();
+            }
+        }
+        
+        function jump() {
+            if (!couple.isJumping && gameRunning) {
+                couple.isJumping = true;
+                // Kekuatan lompatan harus disesuaikan dengan skala agar tingginya proporsional
+                const scale = getScaleFactor();
+                couple.vy = -20 * scale; 
+            }
+        }
+        
+        // --- Inisialisasi Event Listener Awal ---
+        // Karena `init()` akan dipanggil saat window.onload, kita hanya perlu event listener utama di sini
+        window.addEventListener('keydown', handleKeyPress);
+        canvas.addEventListener('click', handleClick);
+        startButton.addEventListener('click', startGame);
+        
+    </script>
+</body>
+</html>
